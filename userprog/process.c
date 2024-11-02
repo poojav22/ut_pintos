@@ -18,10 +18,14 @@
 #include "userprog/pagedir.h"
 #include "userprog/process.h"
 #include "userprog/tss.h"
+#include "threads/malloc.h"
+#include "userprog/syscall.h"
 
 #define LOGGING_LEVEL 6
 
 #include <log.h>
+
+#define  MAX_ARGS  10
 
 static thread_func start_process NO_RETURN;
 static bool load(const char *cmdline, void(**eip) (void), void **esp);
@@ -30,16 +34,11 @@ static bool load(const char *cmdline, void(**eip) (void), void **esp);
  * FILENAME.  The new thread may be scheduled (and may even exit)
  * before process_execute() returns.  Returns the new process's
  * thread id, or TID_ERROR if the thread cannot be created. */
-tid_t
-process_execute(const char *file_name)
-{
+
+tid_t process_execute(const char *file_name) {
     char *fn_copy;
     tid_t tid;
 
-    // NOTE:
-    // To see this print, make sure LOGGING_LEVEL in this file is <= L_TRACE (6)
-    // AND LOGGING_ENABLE = 1 in lib/log.h
-    // Also, probably won't pass with logging enabled.
     log(L_TRACE, "Started process execute: %s", file_name);
 
     /* Make a copy of FILE_NAME.
@@ -48,10 +47,22 @@ process_execute(const char *file_name)
     if (fn_copy == NULL) {
         return TID_ERROR;
     }
-    strlcpy(fn_copy, file_name, PGSIZE);
+    strlcpy(fn_copy, file_name, PGSIZE);  // Copy the file name into fn_copy
 
-    /* Create a new thread to execute FILE_NAME. */
-    tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
+    // bS
+    char *program_name;
+    char *argv0, *save_ptr;
+
+    program_name = palloc_get_page(0);
+    if (program_name == NULL) {
+        return TID_ERROR;
+    }
+    strlcpy(program_name, file_name, PGSIZE);
+    argv0 = strtok_r(program_name, " ", &save_ptr);
+
+    tid = thread_create(argv0, PRI_DEFAULT, start_process, fn_copy);
+    // eS
+
     if (tid == TID_ERROR) {
         palloc_free_page(fn_copy);
     }
@@ -63,12 +74,15 @@ process_execute(const char *file_name)
 static void
 start_process(void *file_name_)
 {
-    char *file_name = file_name_;
+    char *file_name = file_name_; //pointer to program name +arguments
     struct intr_frame if_;
     bool success;
-	struct thread *curr = thread_current();
+    struct thread *cur = thread_current();
+
     log(L_TRACE, "start_process()");
-	strlcpy(curr->name , file_name, strlen(file_name)+1);
+
+    // strlcpy(cur->name, file_name, strlen(file_name)+1);
+
     /* Initialize interrupt frame and load executable. */
     memset(&if_, 0, sizeof if_);
     if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
@@ -101,21 +115,16 @@ start_process(void *file_name_)
  *
  * This function will be implemented in problem 2-2.  For now, it
  * does nothing. */
-int
-process_wait(tid_t child_tid UNUSED)
+int process_wait(tid_t child_tid UNUSED)
 {
-	int i=0;
-	while(i<100000000) {
-		i++;
-	}
-	//sema_init(&block, 0);
-	//sema_down(&block);
-//    return -1;
+    for (long long int i = 0; i < 100000LL; i++) {
+        for (int j=0; j<4000; j++){}
+    }
+    return 0;
 }
 
 /* Free the current process's resources. */
-void
-process_exit(void)
+void process_exit(void)
 {
     struct thread *cur = thread_current();
     uint32_t *pd;
@@ -140,8 +149,7 @@ process_exit(void)
 /* Sets up the CPU for running user code in the current
  * thread.
  * This function is called on every context switch. */
-void
-process_activate(void)
+void process_activate(void)
 {
     struct thread *t = thread_current();
 
@@ -214,7 +222,7 @@ struct Elf32_Phdr {
 #define PF_W 2 /* Writable. */
 #define PF_R 4 /* Readable. */
 
-static bool setup_stack(void **esp, char *);
+static bool setup_stack(void **esp, const char *file_name);
 
 static bool validate_segment(const struct Elf32_Phdr *, struct file *);
 static bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable);
@@ -223,8 +231,7 @@ static bool load_segment(struct file *file, off_t ofs, uint8_t *upage, uint32_t 
  * Stores the executable's entry point into *EIP
  * and its initial stack pointer into *ESP.
  * Returns true if successful, false otherwise. */
-bool
-load(const char *file_name, void(**eip) (void), void **esp)
+bool load(const char *file_name, void(**eip) (void), void **esp)
 {
     log(L_TRACE, "load()");
     struct thread *t = thread_current();
@@ -241,12 +248,20 @@ load(const char *file_name, void(**eip) (void), void **esp)
     }
     process_activate();
 
+    // bS
+    char *save_ptr;
+    char *program_name = malloc(strlen(file_name)+1);
+    strlcpy(program_name, file_name, strlen(file_name)+1); 
+    strtok_r(program_name," ",&save_ptr);
+    strlcpy(t->name, program_name, strlen(program_name)+1); // extract program name and args to thread 
+
     /* Open executable file. */
-    file = filesys_open(file_name);
+    file = filesys_open(program_name);
     if (file == NULL) {
-        printf("load: %s: open failed\n", file_name);
+        printf("load: %s: open failed\n", program_name);
         goto done;
     }
+    //eS
 
     /* Read and verify executable header. */
     if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr
@@ -256,7 +271,7 @@ load(const char *file_name, void(**eip) (void), void **esp)
         || ehdr.e_version != 1
         || ehdr.e_phentsize != sizeof(struct Elf32_Phdr)
         || ehdr.e_phnum > 1024) {
-        printf("load: %s: error loading executable\n", file_name);
+        printf("load: %s: error loading executable\n", program_name);
         goto done;
     }
 
@@ -338,8 +353,7 @@ static bool install_page(void *upage, void *kpage, bool writable);
 
 /* Checks whether PHDR describes a valid, loadable segment in
  * FILE and returns true if so, false otherwise. */
-static bool
-validate_segment(const struct Elf32_Phdr *phdr, struct file *file)
+static bool validate_segment(const struct Elf32_Phdr *phdr, struct file *file)
 {
     /* p_offset and p_vaddr must have the same page offset. */
     if ((phdr->p_offset & PGMASK) != (phdr->p_vaddr & PGMASK)) {
@@ -403,8 +417,7 @@ validate_segment(const struct Elf32_Phdr *phdr, struct file *file)
  *
  * Return true if successful, false if a memory allocation error
  * or disk read error occurs. */
-static bool
-load_segment(struct file *file, off_t ofs, uint8_t *upage,
+static bool load_segment(struct file *file, off_t ofs, uint8_t *upage,
              uint32_t read_bytes, uint32_t zero_bytes, bool writable)
 {
     ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
@@ -448,29 +461,85 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
     return true;
 }
 
-/* Create a minimal stack by mapping a zeroed page at the top of
- * user virtual memory. */
-static bool
-setup_stack(void **esp, char *cmdstr)
-{
+
+//bS
+// /* Create a minimal stack by mapping a zeroed page at the top of
+//  * user virtual memory. */
+
+/* Define struct argument_addr for storing argument addresses */
+struct argument_addr {
+    uint32_t addr;               // To store the address of each argument
+    struct list_elem list_elem;  // To integrate with the linked list structure
+};
+
+/* Push arguments onto the stack and set up the initial process environment. */
+static bool setup_stack(void **esp, const char *file_name) {
     uint8_t *kpage;
     bool success = false;
+    struct list arg_addrs;    // List to store addresses of arguments
+    list_init(&arg_addrs);
+    int argc = 0;             // Number of arguments
 
-    log(L_TRACE, "setup_stack()");
-
+    /* Allocate a page for the stack. */
     kpage = palloc_get_page(PAL_USER | PAL_ZERO);
     if (kpage != NULL) {
-        success = install_page(((uint8_t *)PHYS_BASE) - PGSIZE, kpage, true);
+        success = install_page(((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
         if (success) {
-            *esp = PHYS_BASE;
-	    *esp -= 12;
+            *esp = PHYS_BASE;  // Start the stack at PHYS_BASE
+
+            /* Split the file_name string into tokens (arguments). */
+            char *token, *save_ptr;
+            char *fn_copy = malloc(strlen(file_name) + 1);  // Temporary copy of file_name
+            strlcpy(fn_copy, file_name, strlen(file_name) + 1);
+
+            /* Push each argument (token) onto the stack. */
+            for (token = strtok_r(fn_copy, " ", &save_ptr); token != NULL; token = strtok_r(NULL, " ", &save_ptr)) {
+                argc += 1;
+                *esp -= strlen(token) + 1;  // Adjust stack pointer for the argument string
+                memcpy(*esp, token, strlen(token) + 1);
+
+                /* Save the argument address. */
+                struct argument_addr *arg_addr = malloc(sizeof(struct argument_addr));
+                arg_addr->addr = (uint32_t) *esp;
+                list_push_back(&arg_addrs, &arg_addr->list_elem);
+            }
+
+            /* Align the stack pointer to a 4-byte boundary. */
+            *esp -= (uintptr_t) *esp % 4;
+
+            /* Push a null pointer (argv[argc]) sentinel. */
+            *esp -= sizeof(char *);
+            *(uint32_t *) *esp = 0;
+
+            /* Push the addresses of each argument onto the stack in reverse order. */
+            while (!list_empty(&arg_addrs)) {
+                struct argument_addr *arg_addr = list_entry(list_pop_back(&arg_addrs), struct argument_addr, list_elem);
+                *esp -= sizeof(char *);
+                *(uint32_t *) *esp = arg_addr->addr;
+                free(arg_addr);  // Free memory after use
+            }
+
+            /* Push argv (address of argv[0]). */
+            uint32_t argv_addr = (uint32_t) *esp;
+            *esp -= sizeof(char *);
+            *(uint32_t *) *esp = argv_addr;
+
+            /* Push argc (number of arguments). */
+            *esp -= sizeof(int);
+            *(int *) *esp = argc;
+
+            /* Push a fake return address. */
+            *esp -= sizeof(void *);
+            *(uint32_t *) *esp = 0x0;
+
+            free(fn_copy);  // Free the temporary copy of file_name
         } else {
             palloc_free_page(kpage);
         }
-        // hex_dump( *(int*)esp, *esp, 128, true ); // NOTE: uncomment this to check arg passing
     }
     return success;
 }
+//eS
 
 /* Adds a mapping from user virtual address UPAGE to kernel
  * virtual address KPAGE to the page table.

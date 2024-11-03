@@ -81,6 +81,13 @@ int sys_open(char *fname) {
     return fd;
 }
 
+/*
+ * Runs the executable whose name is given in cmd_line, passing any given arguments, and returns the new process's program id (pid). Must return pid -1, which otherwise should not be a valid pid, if the program cannot load or run for any reason. Thus, the parent process cannot return from the exec until it knows whether the child process successfully loaded its executable. You must use appropriate synchronization to ensure this.
+ */
+pid_t exec (const char *cmd_line) {
+
+}
+
 static void
 syscall_handler(struct intr_frame *f UNUSED)
 {
@@ -150,13 +157,11 @@ syscall_handler(struct intr_frame *f UNUSED)
     case SYS_CLOSE:    /* Close a file. */
 	break;
 
-    /* Project 3 and optionally project 4. */
     case SYS_MMAP:   /* Map a file into memory. */
 	break;
     case SYS_MUNMAP: /* Remove a memory mapping. */
 	break;
 
-    /* Project 4 only. */
     case SYS_CHDIR:   /* Change the current directory. */
 	break;
     case SYS_MKDIR:   /* Create a directory. */

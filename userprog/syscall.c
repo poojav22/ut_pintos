@@ -36,6 +36,9 @@ void
 syscall_init(void)
 {
     intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall");
+    //bS
+    //lock_init(&filesys_lock);  // Initialize lock for file system operations
+    //eS
 }
 
 void sys_halt() {
@@ -81,6 +84,16 @@ int sys_open(char *fname) {
     return fd;
 }
 
+//bS
+bool sys_create(const char *file, unsigned initial_size) {
+    if (!is_valid_ptr(file)) {
+        sys_exit(-1);  // Exit if file pointer is invalid
+    }
+    return filesys_create(file, initial_size);
+}
+//eS
+
+
 /*
  * Runs the executable whose name is given in cmd_line, passing any given arguments, and returns the new process's program id (pid). Must return pid -1, which otherwise should not be a valid pid, if the program cannot load or run for any reason. Thus, the parent process cannot return from the exec until it knows whether the child process successfully loaded its executable. You must use appropriate synchronization to ensure this.
  */
@@ -110,7 +123,7 @@ syscall_handler(struct intr_frame *f UNUSED)
         //bS
         sys_halt();
         //eS
-	    break;
+	break;
     case SYS_EXIT:     /* Terminate this process. */
         //bS
          if (!is_valid_ptr(usp + 1)) {
@@ -118,13 +131,16 @@ syscall_handler(struct intr_frame *f UNUSED)
         }
         //eS
     sys_exit(*(usp + 1));
-
 	break;
     case SYS_EXEC:     /* Start another process. */
 	break;
     case SYS_WAIT:     /* Wait for a child process to die. */
 	break;
     case SYS_CREATE:   /* Create a file. */
+        if (!is_valid_ptr(usp + 1) || !is_valid_ptr(usp + 2)) {
+                sys_exit(-1);  // Validate pointers
+            }
+        f->eax = sys_create((const char *)*(usp + 1), *(usp + 2));      
 	break;
     case SYS_REMOVE:   /* Delete a file. */
 	break;
@@ -143,10 +159,10 @@ syscall_handler(struct intr_frame *f UNUSED)
     //bS       
       if (!is_valid_ptr(usp + 1) || !is_valid_ptr(usp + 2) || !is_valid_ptr(usp + 3)) {
         sys_exit(-1);  // Exit if any argument pointer is invalid
-    }
-    sys_write(*(usp + 1), (const char *)*(usp + 2), *(usp + 3));
-    f->eax = 0;
-    return;
+        }
+        sys_write(*(usp + 1), (const char *)*(usp + 2), *(usp + 3));
+        f->eax = 0;
+        return;
     //eS
 
 	break;

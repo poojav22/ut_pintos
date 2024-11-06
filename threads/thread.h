@@ -7,6 +7,7 @@
 
 // bS
 #include "threads/synch.h" 
+#define NUMFILE 50
 // eS 
 
 /* States in a thread's life cycle. */
@@ -91,6 +92,7 @@ struct thread {
     uint8_t           *stack;    /* Saved stack pointer. */
     int                priority; /* Priority. */
     struct list_elem   allelem;  /* List element for all threads list. */
+    struct file* fdtable[NUMFILE]; //eS //bS we need fdtable in sys_write
 
 // bS
 /* Add these fields for managing parent-child relationships */

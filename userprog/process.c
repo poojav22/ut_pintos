@@ -241,6 +241,16 @@ bool load(const char *file_name, void(**eip) (void), void **esp)
     bool success = false;
     int i;
 
+    //initializing fdtable for current thread
+    //bS
+    for (i=0;i<NUMFILE;i++){
+        t->fdtable[i]=NULL;
+    }
+    t->fdtable[0]=(struct file*) 100; //making sure stdin, stdout, and sterr dont get assigned
+    t->fdtable[1]=(struct file*) 100;
+    t->fdtable[2]=(struct file*) 100; 
+    //eS
+
     /* Allocate and activate page directory. */
     t->pagedir = pagedir_create();
     if (t->pagedir == NULL) {

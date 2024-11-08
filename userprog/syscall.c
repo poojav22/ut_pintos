@@ -59,10 +59,11 @@ bool sys_create(const char *file, unsigned initial_size) {
 }
 
 int sys_open(char *fname) {
+
     struct file *fptr;
     struct thread* curr = thread_current();
-    //add fptr to fdtable at next fd location
-    if (!is_valid_ptr(fname)){
+    
+    if (!is_valid_ptr(fname)){ //add fptr to fdtable at next fd location
         sys_exit(-1);
     }
     if (fname==NULL){
@@ -85,7 +86,7 @@ Writes size bytes from buffer to the open file fd.
 Returns the number of bytes actually written, which may be less than size if some bytes could not be written. 
 */
 int sys_write(int fd, const void *buffer, unsigned size) {
-    struct thread* curr = thread_current();
+    struct thread *curr = thread_current();
     // Validating buffer
     if (!is_valid_ptr(buffer) || !is_valid_ptr((const char *)buffer + size - 1)) {
         sys_exit(-1);  // Exit if buffer is invalid
@@ -102,8 +103,46 @@ int sys_write(int fd, const void *buffer, unsigned size) {
         return file_write(curr->fdtable[fd], buffer, size);
     }
 }
-//eS
 
+int sys_read(int fd, void *buffer, unsigned size){
+    if (!is_valid_buffer(buffer, size)) {
+        sys_exit(-1);  // Exit if buffer is invalid
+    }
+
+    struct thread *curr = thread_current();
+    int bytes_read = 0;
+   
+    if (fd==0) { //reading from stdin
+        for (int i=0; i<size; i++){
+            char c = input_getc();
+            if (c == '\0'){
+                break;
+            }
+            ((char *)buffer)[i] = c; 
+            bytes_read++;
+        }
+        return bytes_read;
+    } 
+    if (fd<0 || fd==1 || fd>=NUMFILE || curr->fdtable[fd]==NULL){       
+        sys_exit(-1); // Exit if invalid fd, 0 is stdin,
+    }
+    else{
+        //struct file *fptr = curr->fdtable[fd];
+        //int bytes_read = file_read(fptr, buffer, size);
+        return file_read(curr->fdtable[fd], buffer, size);//bytes_read;
+        } 
+    }
+
+    int sys_filesize(int fd) {
+    struct thread *curr = thread_current();
+        if (fd < 0 || fd >= NUMFILE || curr->fdtable[fd] == NULL) {
+        sys_exit(-1); // Invalid file descriptor
+        }
+
+    struct file *fptr = curr->fdtable[fd];
+    return file_length(fptr);
+    }
+//eS
 
 /*
  * Runs the executable whose name is given in cmd_line, passing any given arguments, and returns the new process's program id (pid). Must return pid -1, which otherwise should not be a valid pid, if the program cannot load or run for any reason. Thus, the parent process cannot return from the exec until it knows whether the child process successfully loaded its executable. You must use appropriate synchronization to ensure this.
@@ -146,23 +185,42 @@ static void syscall_handler(struct intr_frame *f UNUSED)
     case SYS_REMOVE:   /* Delete a file. */
 	break;
     case SYS_OPEN:     /* Open a file. */
-	    f->eax = sys_open(*(usp+1));
+	    f->eax = sys_open((char *)*(usp + 1));
     return;
     case SYS_FILESIZE: /* Obtain a file's size. */
+    if (!is_valid_ptr(usp + 1)) {
+                sys_exit(-1);  // Exit if the argument pointer is invalid
+            }
+            {
+                int fd = *(usp + 1);
+                f->eax = sys_filesize(fd);
+            }
 	break;
-    case SYS_READ:     /* Read from a file. */
-	break;
+    case SYS_READ:     /* Read from a file. */ 
+    //bS
+        if (!is_valid_ptr(usp+1) || !is_valid_ptr(usp+2) || !is_valid_ptr(usp+3)){
+            sys_exit(-1);
+        }
+        {
+            int fd = *(usp+1);
+            void *buffer = (void *)*(usp+2);
+            unsigned size = *(usp+3);
 
+            f->eax = sys_read(fd, buffer, size);
+        }
+            return; //eS
     case SYS_WRITE:    /* Write to a file. */
     //bS       
         if (!is_valid_ptr(usp + 1) || !is_valid_ptr(usp + 2) || !is_valid_ptr(usp + 3)) {
             sys_exit(-1);  // Exit if any argument pointer is invalid
         }
+        {
         int fd = *(usp + 1);
         const void *buffer = (const void *)*(usp + 2);
         unsigned size = *(usp + 3);
         
          f->eax = sys_write(fd, buffer, size); // Call sys_write and store the return value in f->eax
+        }
         return;
     //eS
     case SYS_SEEK:     /* Change position in a file. */

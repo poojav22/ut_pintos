@@ -28,29 +28,28 @@ bool is_valid_buffer(const void *buffer, unsigned size) {
     }
     return true;
 }
-//eS
 
 static void syscall_handler(struct intr_frame *);
+void child_zombie();
 
 void syscall_init(void)
 {
     intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall");
-    //bS
-    //lock_init(&filesys_lock);  // Initialize lock for file system operations     //eS
 }
 
 void sys_halt() {
     shutdown_power_off();
 }
 
+//bS
 void sys_exit(int status) {
     struct thread *curr = thread_current();
     curr->exitStatus = status;  
     printf("%s: exit(%d)\n", curr->name, status);
-    thread_exit();
+    //thread_exit();
+    child_zombie();
 }
 
-//bS
 bool sys_create(const char *file, unsigned initial_size) {
     if (!is_valid_ptr(file)) {
         sys_exit(-1);  // Exit if file pointer is invalid
@@ -59,7 +58,6 @@ bool sys_create(const char *file, unsigned initial_size) {
 }
 
 int sys_open(char *fname) {
-
     struct file *fptr;
     struct thread* curr = thread_current();
     
@@ -75,8 +73,12 @@ int sys_open(char *fname) {
             if (fptr==NULL){
                 return -1;
                 }
+            if (strcmp(curr->name,fname)==0){
+                file_deny_write(fptr);
+            }           
             curr->fdtable[i]=fptr;
             return i;
+
         }
     }
     return -1;
@@ -90,6 +92,9 @@ int sys_write(int fd, const void *buffer, unsigned size) {
     // Validating buffer
     if (!is_valid_ptr(buffer) || !is_valid_ptr((const char *)buffer + size - 1)) {
         sys_exit(-1);  // Exit if buffer is invalid
+    }
+    if (!is_valid_buffer(buffer, size)) {
+        sys_exit(-1);  // Exit if the buffer is invalid
     }
     if (fd<=0 || fd>=NUMFILE || curr->fdtable[fd]==NULL){       
         sys_exit(-1); // Exit if invalid fd, 0 is stdin,
@@ -105,6 +110,7 @@ int sys_write(int fd, const void *buffer, unsigned size) {
 }
 
 int sys_read(int fd, void *buffer, unsigned size){
+
     if (!is_valid_buffer(buffer, size)) {
         sys_exit(-1);  // Exit if buffer is invalid
     }
@@ -133,6 +139,22 @@ int sys_read(int fd, void *buffer, unsigned size){
         } 
     }
 
+void sys_seek(int fd, unsigned position) {
+    struct thread *curr = thread_current();
+    if (fd < 0 || fd >= NUMFILE || curr->fdtable[fd] == NULL) {
+        sys_exit(-1); // Invalid file descriptor
+    }
+    file_seek(curr->fdtable[fd], position);
+    }
+
+unsigned sys_tell(int fd) {
+    struct thread *curr = thread_current();
+    if (fd < 0 || fd >= NUMFILE || curr->fdtable[fd] == NULL) {
+        sys_exit(-1); // Invalid file descriptor
+    }
+    return file_tell(curr->fdtable[fd]);
+    }
+
     int sys_filesize(int fd) {
     struct thread *curr = thread_current();
         if (fd < 0 || fd >= NUMFILE || curr->fdtable[fd] == NULL) {
@@ -141,6 +163,29 @@ int sys_read(int fd, void *buffer, unsigned size){
 
     struct file *fptr = curr->fdtable[fd];
     return file_length(fptr);
+    }
+
+    static int sys_exec(char *child){
+            if (!is_valid_ptr(child)){ //add fptr to fdtable at next fd location
+                sys_exit(-1);
+            }
+        return process_execute(child);
+    }
+
+    static int sys_wait(int tid){
+       return process_wait(tid);
+    }
+
+void sys_close(int fd) {
+    struct thread *curr = thread_current();
+    if (fd == 0 || fd == 1) {
+        sys_exit(-1);  // Exit with -1 for invalid attempt to close stdin or stdout
+    }
+    if (fd < 0 || fd >= NUMFILE || curr->fdtable[fd] == NULL) {
+        sys_exit(-1); // Invalid file descriptor
+    }
+    file_close(curr->fdtable[fd]);
+    curr->fdtable[fd] = NULL;
     }
 //eS
 
@@ -153,12 +198,10 @@ int sys_read(int fd, void *buffer, unsigned size){
 
 static void syscall_handler(struct intr_frame *f UNUSED)
 {
-    //bS Check if f->esp is a valid user pointer
+    //Check if f->esp is a valid user pointer
     if (!is_valid_ptr(f->esp)) {
         sys_exit(-1);  // Exit with -1 if the stack pointer is invalid
-    }   
-    //eS
-
+    } 
     int *usp = f->esp;
     int callno = *usp;
     //printf("Function call: %d\n", *usp);
@@ -173,9 +216,17 @@ static void syscall_handler(struct intr_frame *f UNUSED)
         sys_exit(*(usp + 1));
 	break;
     case SYS_EXEC:     /* Start another process. */
-	break;
+        if (!is_valid_ptr(usp + 1)) {
+                sys_exit(-1);  // Exit if the argument pointer is invalid
+            }
+        f->eax = sys_exec((char *)*(usp + 1));
+    break;
     case SYS_WAIT:     /* Wait for a child process to die. */
-	break;
+            if (!is_valid_ptr(usp + 1)) {
+                sys_exit(-1);  // Exit if the argument pointer is invalid
+            }
+        f->eax = sys_wait(*(usp + 1));
+    break;
     case SYS_CREATE:   /* Create a file. */
         if (!is_valid_ptr(usp + 1) || !is_valid_ptr(usp + 2)) {
                 sys_exit(-1);  // Validate pointers
@@ -188,47 +239,44 @@ static void syscall_handler(struct intr_frame *f UNUSED)
 	    f->eax = sys_open((char *)*(usp + 1));
     return;
     case SYS_FILESIZE: /* Obtain a file's size. */
-    if (!is_valid_ptr(usp + 1)) {
+        if (!is_valid_ptr(usp + 1)) {
                 sys_exit(-1);  // Exit if the argument pointer is invalid
             }
-            {
-                int fd = *(usp + 1);
-                f->eax = sys_filesize(fd);
-            }
+        f->eax = sys_filesize(*(usp + 1));
 	break;
     case SYS_READ:     /* Read from a file. */ 
-    //bS
         if (!is_valid_ptr(usp+1) || !is_valid_ptr(usp+2) || !is_valid_ptr(usp+3)){
             sys_exit(-1);
-        }
-        {
-            int fd = *(usp+1);
-            void *buffer = (void *)*(usp+2);
-            unsigned size = *(usp+3);
-
-            f->eax = sys_read(fd, buffer, size);
-        }
-            return; //eS
-    case SYS_WRITE:    /* Write to a file. */
-    //bS       
+            }
+        int fd = *(usp+1);
+        void *buffer = (void *)*(usp+2);
+        unsigned size = *(usp+3);       
+        f->eax = sys_read(fd, buffer, size);
+        break;
+    case SYS_WRITE:    /* Write to a file. */       
         if (!is_valid_ptr(usp + 1) || !is_valid_ptr(usp + 2) || !is_valid_ptr(usp + 3)) {
             sys_exit(-1);  // Exit if any argument pointer is invalid
-        }
-        {
-        int fd = *(usp + 1);
-        const void *buffer = (const void *)*(usp + 2);
-        unsigned size = *(usp + 3);
-        
-         f->eax = sys_write(fd, buffer, size); // Call sys_write and store the return value in f->eax
-        }
-        return;
-    //eS
+        }    
+        f->eax = sys_write(*(usp + 1), (const void *)*(usp + 2), *(usp + 3)); // Call sys_write and store the return value in f->eax
+        break;
     case SYS_SEEK:     /* Change position in a file. */
-	break;
+        if (!is_valid_ptr(usp + 1) || !is_valid_ptr(usp + 2)) {
+            sys_exit(-1);  // Validate pointers
+        }
+        sys_seek(*(usp + 1), *(usp + 2));
+	    break;
     case SYS_TELL:     /* Report current position in a file. */
-	break;
+        if (!is_valid_ptr(usp + 1)) {
+            sys_exit(-1);  // Validate pointer
+        }
+        f->eax = sys_tell(*(usp + 1));
+	    break;
     case SYS_CLOSE:    /* Close a file. */
-	break;
+        if (!is_valid_ptr(usp + 1)) {
+        sys_exit(-1);  // Validate pointer
+        }
+        sys_close(*(usp + 1));
+	    break;
     case SYS_MMAP:   /* Map a file into memory. */
 	break;
     case SYS_MUNMAP: /* Remove a memory mapping. */

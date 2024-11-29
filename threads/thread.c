@@ -102,6 +102,7 @@ thread_init(void)
     list_init(&ready_list);
     list_init(&all_list);
 
+    list_init(&initial_thread->child_list); //initializing the child_list for the initial thread //[NEW]
     /* Set up a thread structure for the running thread. */
     initial_thread = running_thread();
     init_thread(initial_thread, "main", PRI_DEFAULT);
@@ -483,11 +484,25 @@ init_thread(struct thread *t, const char *name, int priority)
     list_push_back(&all_list, &t->allelem);
     intr_set_level(old_level);
 
-    // //bS
-    list_init(&t->children);            /* Initialize children list */
-    sema_init(&t->wait_sema, 0);
-    // //eS
+    //[bNEW]
+    list_init(&t->child_list);            /* Initialize children list */
+    sema_init(&t->load_sema, 0);
+    sema_init(&t->exit_sema, 0);
+    //[eNEW]
 }
+
+//[bNEW]
+/* Function to get thread by tid */
+struct thread *get_thread_by_tid(tid_t tid) {
+    struct list_elem *e;
+    for (e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e)) {
+        struct thread *t = list_entry(e, struct thread, allelem);
+        if (t->tid == tid) {
+            return t;
+        }
+    }
+    return NULL;
+} //[eNEW]
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
  * returns a pointer to the frame's base. */

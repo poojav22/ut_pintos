@@ -7,7 +7,7 @@
 
 // bS
 #include "threads/synch.h" 
-#define NUMFILE 50
+#define NUMFILE 256
 // eS 
 
 /* States in a thread's life cycle. */
@@ -15,7 +15,8 @@ enum thread_status {
     THREAD_RUNNING, /* Running thread. */
     THREAD_READY,   /* Not running but ready to run. */
     THREAD_BLOCKED, /* Waiting for an event to trigger. */
-    THREAD_DYING    /* About to be destroyed. */
+    THREAD_DYING,    /* About to be destroyed. */
+    THREAD_ZOMBIE
 };
 
 /* Thread identifier type.
@@ -94,12 +95,8 @@ struct thread {
     struct list_elem   allelem;  /* List element for all threads list. */
     struct file* fdtable[NUMFILE]; //eS //bS we need fdtable in sys_write
 
-// bS
+
 /* Add these fields for managing parent-child relationships */
-    struct list children;               /* List of child processes. */
-    struct list_elem child_elem;        /* Element in the parent's children list. */
-    struct semaphore wait_sema;         /* Semaphore for parent to wait on child exit. */
-// eS
     /* Shared between thread.c and synch.c. */
     struct list_elem elem; /* List element. */
 
@@ -107,11 +104,25 @@ struct thread {
     /* Owned by userprog/process.c. */
     uint32_t *pagedir; /* Page directory. */
     int exitStatus;
-#endif
 
+    //[bNEW]
+    /* Synchronization primitives for parent-child communication */         
+    struct semaphore exit_sema;     /* Semaphore for synchronizing exit */
+    struct semaphore load_sema;     /* Semaphore for synchronizing load */
+
+    /* Parent-child relationship */
+    struct thread *parent;          /* Pointer to the parent thread */
+    struct list child_list;         /* List of child threads */
+    struct list_elem child_elem;    /* List element for child list */
+
+    /* Exit status and load success flag */
+    bool load_success;              /* True if load was successful */
+    //[eNEW]
+#endif
     /* Owned by thread.c. */
     unsigned magic; /* Detects stack overflow. */
 };
+struct thread *get_thread_by_tid(tid_t tid); //[NEW]
 
 /* If false (default), use round-robin scheduler.
  * If true, use multi-level feedback queue scheduler.
